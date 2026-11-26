@@ -333,17 +333,25 @@ const METHODS = {
   // Cosmos SDK chains: bank supply of one denom, minus the community pool (and any listed treasury accounts).
   async cosmos(r) {
     const dec = 10 ** (r.decimals ?? 6);
-    const total = Number((await getJSON(`${r.lcd}/cosmos/bank/v1beta1/supply/by_denom?denom=${r.denom}`)).amount.amount) / dec;
+    const total = Number((await getJSON(`${r.lcd}/cosmos/bank/v1beta1/supply/by_denom?denom=${r.denom}`)).amount?.amount) / dec;
+    if (!Number.isFinite(total) || total <= 0) throw new Error(`bad cosmos total supply for ${r.denom}: ${total}`);
     const excluded = [];
     if (r.communityPool !== false) {
       const p = (await getJSON(`${r.lcd}/cosmos/distribution/v1beta1/community_pool`)).pool.find(x => x.denom === r.denom);
-      if (p) excluded.push({ reason: 'Community pool (on-chain treasury)', amount: Number(p.amount) / dec, src: `${r.lcd}/cosmos/distribution/v1beta1/community_pool` });
+      if (p) {
+        const amount = Number(p.amount) / dec;
+        if (!Number.isFinite(amount) || amount < 0) throw new Error(`bad cosmos community pool for ${r.denom}`);
+        excluded.push({ reason: 'Community pool (on-chain treasury)', amount, src: `${r.lcd}/cosmos/distribution/v1beta1/community_pool` });
+      }
     }
     for (const e of r.exclude || []) {
       const b = (await getJSON(`${r.lcd}/cosmos/bank/v1beta1/balances/${e.holder}/by_denom?denom=${r.denom}`)).balance;
-      excluded.push({ reason: e.reason, holder: e.holder, amount: Number(b.amount) / dec, src: r.explorer ? r.explorer + e.holder : undefined });
+      const amount = Number(b?.amount) / dec;
+      if (!Number.isFinite(amount) || amount < 0) throw new Error(`bad cosmos balance for ${e.holder}`);
+      excluded.push({ reason: e.reason, holder: e.holder, amount, src: r.explorer ? r.explorer + e.holder : undefined });
     }
-    return { circulating: total - excluded.reduce((s, e) => s + e.amount, 0), total, src: r.explorer || r.lcd, excluded, note: r.note };
+    const circulating = r.circulating === false ? null : total - excluded.reduce((s, e) => s + e.amount, 0);
+    return { circulating, total, src: r.explorer || r.lcd, excluded, note: r.note };
   },
   // Algorand: total ALGO from a public algod node, minus the Algorand Foundation wallets the Foundation
   // publishes at algorand.co/algorand-foundation/transparency (archived copy cited in coins.json; the
